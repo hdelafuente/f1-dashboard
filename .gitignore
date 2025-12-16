@@ -205,3 +205,14 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# FastF1 cache
+f1_cache/
+
+# Generated CSV files
+qualifying_data_*.csv
+predictions_*.csv
+
+# ML Models
+pole_model_*.pkl
+*.pkl
