@@ -8,24 +8,39 @@ Dashboard web interactivo (Taipy + FastF1 + Plotly) para análisis de telemetrí
 - **Efficiency Score**: % de tiempo con acelerador a fondo (≥95%)
 - **Coast/Lift %**: % de tiempo levantando acelerador sin frenar (detecta pendiente negativa de throttle)
 
-### Gráfico Unificado de Telemetría (4 filas, eje X compartido)
+### 🗺️ Mapa del Circuito
+Visualización del trazado con eventos marcados:
+| Elemento | Color | Descripción |
+|----------|-------|-------------|
+| **Trazado** | Color del piloto | Línea del circuito basada en coordenadas X,Y |
+| **Coast/Lift** | 🟠 Naranja | Zonas levantando acelerador sin frenar |
+| **Traction Loss** | 🟣 Magenta | Posible patinaje (RPM sube, velocidad no) |
+| **Curvas** | ⚪ Blanco | Diamantes numerados en cada curva |
+| **Start/Finish** | 🟢 Verde | Estrella en línea de meta |
 
+### 📈 Telemetría Unificada (4 filas, eje X compartido)
 | Fila | Descripción |
 |------|-------------|
-| **Speed** | Velocidad (km/h) con zonas de Coast/Lift marcadas en naranja |
+| **Speed** | Velocidad (km/h) con Coast/Lift (naranja) y Traction Loss (magenta) |
 | **Throttle & Brake** | Acelerador (verde) y freno (rojo) con línea de referencia al 95% |
-| **RPM** | Revoluciones del motor |
+| **RPM** | Revoluciones del motor con Traction Loss marcado |
 | **Gear** | Selección de marchas (1-8) |
 
-### Gráficos Adicionales
+### 🏁 Análisis de Tiempos
 | Gráfico | Descripción |
 |---------|-------------|
 | **Sector Times** | Tiempos por sector (S1, S2, S3) de todas las vueltas válidas |
-| **Lap Time Evolution** | Evolución de tiempos por vuelta con vuelta rápida destacada |
+| **Pace vs Tyre Age** | Evolución de tiempos + edad del neumático por compuesto |
+| **Stint Comparison** | Barras horizontales con tiempo promedio por compuesto |
+
+### 🔍 Detección Automática
+- **Coast/Lift**: Pendiente negativa de throttle + throttle < 95% + sin freno
+- **Traction Loss**: RPM subiendo > 200 + velocidad estancada + throttle > 50%
 
 ### Características
-- **Eje X compartido** en telemetría (zoom/pan sincronizado en Speed, Throttle, RPM, Gear)
+- **Eje X compartido** en telemetría (zoom/pan sincronizado)
 - **Marcadores de curvas** del circuito en todos los gráficos
+- **Colores por compuesto**: 🔴 Soft, 🟡 Medium, ⚪ Hard, 🟢 Inter, 🔵 Wet
 - Soporte para **Qualifying** y **Race**
 - Datos desde **2018** hasta la temporada actual
 

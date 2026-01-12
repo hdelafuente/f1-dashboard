@@ -216,3 +216,5 @@ predictions_*.csv
 # ML Models
 pole_model_*.pkl
 *.pkl
+
+server.sh

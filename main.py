@@ -24,7 +24,7 @@ FALLBACK_COLORS = ['#0600EF', '#FF8700', '#FF1801', '#DC143C', '#00D2BE',
                    '#FF69B4', '#32CD32', '#FF4500', '#8A2BE2', '#00CED1']
 
 # Variables globales (estado)
-current_year = datetime.now().year
+current_year = datetime.now().year - 1
 circuit = "Monaco"
 year = current_year
 session_type = "Qualifying"
@@ -35,6 +35,8 @@ selected_driver = ""
 fig = None
 fig_sectors = None
 fig_laptimes = None
+fig_stint = None
+fig_map = None
 efficiency_score = 0.0
 coast_percentage = 0.0
 
@@ -151,6 +153,16 @@ def plot_telemetry_combined(driver_data):
     coast_pct = round((telemetry['Coast'].sum() / len(telemetry)) * 100, 1)
     coast_mask = telemetry['Coast']
 
+    # Detectar traction events: RPM sube pero velocidad no (posible patinaje)
+    telemetry['RPM_diff'] = telemetry['RPM'].diff().fillna(0)
+    telemetry['Speed_diff'] = telemetry['Speed'].diff().fillna(0)
+    telemetry['Traction'] = (
+        (telemetry['RPM_diff'] > 200) &      # RPM subiendo significativamente
+        (telemetry['Speed_diff'] < 1) &       # Velocidad estancada o bajando
+        (telemetry['Throttle'] > 50)          # Con acelerador aplicado
+    )
+    traction_mask = telemetry['Traction']
+
     # Crear 4 subplots con eje X compartido
     fig_plot = make_subplots(
         rows=4, cols=1,
@@ -178,6 +190,15 @@ def plot_telemetry_combined(driver_data):
             y=telemetry.loc[coast_mask, 'Speed'],
             mode='markers', name='Coast/Lift',
             marker=dict(color='#FFA500', size=4, opacity=0.7)
+        ), row=1, col=1)
+
+    # Marcar traction events en Speed (rojo)
+    if traction_mask.any():
+        fig_plot.add_trace(go.Scatter(
+            x=telemetry.loc[traction_mask, 'Distance'],
+            y=telemetry.loc[traction_mask, 'Speed'],
+            mode='markers', name='Traction Loss',
+            marker=dict(color='#FF00FF', size=6, symbol='x', opacity=0.9)
         ), row=1, col=1)
 
     # Fila 2: Throttle y Brake
@@ -211,6 +232,16 @@ def plot_telemetry_combined(driver_data):
         mode='lines', name=f"{abbrev} - RPM",
         line=dict(color=color, width=2)
     ), row=3, col=1)
+
+    # Marcar traction events en RPM (magenta)
+    if traction_mask.any():
+        fig_plot.add_trace(go.Scatter(
+            x=telemetry.loc[traction_mask, 'Distance'],
+            y=telemetry.loc[traction_mask, 'RPM'],
+            mode='markers', name='Traction Loss (RPM)',
+            marker=dict(color='#FF00FF', size=6, symbol='x', opacity=0.9),
+            showlegend=False
+        ), row=3, col=1)
 
     # Fila 4: Gear
     fig_plot.add_trace(go.Scatter(
@@ -291,7 +322,7 @@ def plot_sector_times(driver_data):
 
 
 def plot_laptime_evolution(driver_data):
-    """Gráfico de línea con evolución de tiempos por vuelta"""
+    """Gráfico de evolución de tiempos con TyreLife (edad del neumático) en eje compartido"""
     if driver_data is None:
         return None
 
@@ -310,30 +341,72 @@ def plot_laptime_evolution(driver_data):
     lap_numbers = valid_laps['LapNumber'].astype(int).tolist()
 
     fastest_idx = lap_times.index(min(lap_times))
-    colors = [color if i !=
-              fastest_idx else '#FFD700' for i in range(len(lap_times))]
+    marker_colors = [color if i !=
+                     fastest_idx else '#FFD700' for i in range(len(lap_times))]
     sizes = [8 if i != fastest_idx else 14 for i in range(len(lap_times))]
 
-    fig_plot = go.Figure()
+    # Colores por compuesto de neumático
+    compound_colors = {
+        'SOFT': '#FF3333',
+        'MEDIUM': '#FFF200',
+        'HARD': '#EBEBEB',
+        'INTERMEDIATE': '#43B02A',
+        'WET': '#0067AD'
+    }
+
+    # Crear subplots con eje X compartido
+    fig_plot = make_subplots(
+        rows=2, cols=1,
+        shared_xaxes=True,
+        vertical_spacing=0.1,
+        subplot_titles=("Lap Time Evolution", "Tyre Age (by Compound)"),
+        row_heights=[0.7, 0.3]
+    )
+
+    # Fila 1: Lap Time Evolution
     fig_plot.add_trace(go.Scatter(
         x=lap_numbers, y=lap_times,
         mode='lines+markers',
-        name=abbrev,
+        name=f"{abbrev} - Lap Time",
         line=dict(color=color, width=2),
-        marker=dict(color=colors, size=sizes)
-    ))
+        marker=dict(color=marker_colors, size=sizes)
+    ), row=1, col=1)
 
     avg_time = sum(lap_times) / len(lap_times)
     fig_plot.add_hline(y=avg_time, line_dash="dash", line_color="gray",
-                       annotation_text=f"Promedio: {avg_time:.3f}s")
+                       annotation_text=f"Avg: {avg_time:.2f}s", row=1, col=1)
+
+    # Fila 2: Tyre Age scatter por compuesto
+    if 'TyreLife' in valid_laps.columns and 'Compound' in valid_laps.columns:
+        tyre_life = valid_laps['TyreLife'].fillna(0).astype(int).tolist()
+        compounds = valid_laps['Compound'].fillna('UNKNOWN').tolist()
+
+        # Agrupar por compuesto para la leyenda
+        for compound in compound_colors:
+            mask = [c == compound for c in compounds]
+            if any(mask):
+                x_vals = [lap_numbers[i] for i, m in enumerate(mask) if m]
+                y_vals = [tyre_life[i] for i, m in enumerate(mask) if m]
+                fig_plot.add_trace(go.Scatter(
+                    x=x_vals, y=y_vals,
+                    mode='markers',
+                    name=compound,
+                    marker=dict(
+                        color=compound_colors[compound], size=10, symbol='circle')
+                ), row=2, col=1)
 
     fig_plot.update_layout(
-        title=f"Evolución de Tiempos - {abbrev} (⭐ = vuelta rápida)",
-        xaxis_title="Vuelta",
-        yaxis_title="Tiempo (s)",
+        title=f"Pace vs Tyre Age - {abbrev} (⭐ = vuelta rápida)",
         template="plotly_dark",
-        height=400
+        legend=dict(orientation="h", yanchor="bottom",
+                    y=1.02, xanchor="right", x=1),
+        height=500
     )
+
+    fig_plot.update_yaxes(title_text="Tiempo (s)", row=1, col=1)
+    fig_plot.update_yaxes(title_text="Tyre Age (laps)", row=2, col=1)
+    fig_plot.update_xaxes(title_text="Vuelta", row=2, col=1)
+
     return fig_plot
 
 
@@ -350,6 +423,192 @@ def calculate_efficiency_score(driver_data):
     full_throttle_samples = (telemetry['Throttle'] >= 95).sum()
 
     return round((full_throttle_samples / total_samples) * 100, 1)
+
+
+def plot_circuit_map(driver_data):
+    """Mapa del circuito con puntos de traction events y coast/lift"""
+    if driver_data is None:
+        return None
+
+    telemetry = driver_data['fastest_telemetry']
+    if telemetry is None or telemetry.empty:
+        return None
+
+    if 'X' not in telemetry.columns or 'Y' not in telemetry.columns:
+        return None
+
+    abbrev = driver_data['abbrev']
+    color = driver_data['color']
+    circuit_info = driver_data['circuit_info']
+
+    # Detectar zonas de coast/lift
+    telemetry['ThrottleSlope'] = telemetry['Throttle'].diff().fillna(0)
+    telemetry['Coast'] = (
+        (telemetry['ThrottleSlope'] < 0) &
+        (telemetry['Throttle'] < 95) &
+        (telemetry['Brake'] == 0)
+    )
+
+    # Detectar traction events
+    telemetry['RPM_diff'] = telemetry['RPM'].diff().fillna(0)
+    telemetry['Speed_diff'] = telemetry['Speed'].diff().fillna(0)
+    telemetry['Traction'] = (
+        (telemetry['RPM_diff'] > 200) &
+        (telemetry['Speed_diff'] < 1) &
+        (telemetry['Throttle'] > 50)
+    )
+
+    coast_mask = telemetry['Coast']
+    traction_mask = telemetry['Traction']
+
+    fig_plot = go.Figure()
+
+    # Trazado del circuito (línea base)
+    fig_plot.add_trace(go.Scatter(
+        x=telemetry['X'], y=telemetry['Y'],
+        mode='lines',
+        name='Circuit',
+        line=dict(color=color, width=3),
+        hoverinfo='skip'
+    ))
+
+    # Puntos de Coast/Lift (naranja)
+    if coast_mask.any():
+        fig_plot.add_trace(go.Scatter(
+            x=telemetry.loc[coast_mask, 'X'],
+            y=telemetry.loc[coast_mask, 'Y'],
+            mode='markers',
+            name=f'Coast/Lift ({coast_mask.sum()} pts)',
+            marker=dict(color='#FFA500', size=6, opacity=0.7),
+            hovertemplate='Coast/Lift<br>Speed: %{customdata[0]:.0f} km/h<br>Throttle: %{customdata[1]:.0f}%<extra></extra>',
+            customdata=telemetry.loc[coast_mask, ['Speed', 'Throttle']].values
+        ))
+
+    # Puntos de Traction Loss (magenta)
+    if traction_mask.any():
+        fig_plot.add_trace(go.Scatter(
+            x=telemetry.loc[traction_mask, 'X'],
+            y=telemetry.loc[traction_mask, 'Y'],
+            mode='markers',
+            name=f'Traction Loss ({traction_mask.sum()} pts)',
+            marker=dict(color='#FF00FF', size=8, symbol='x'),
+            hovertemplate='Traction Loss<br>Speed: %{customdata[0]:.0f} km/h<br>RPM: %{customdata[1]:.0f}<extra></extra>',
+            customdata=telemetry.loc[traction_mask, ['Speed', 'RPM']].values
+        ))
+
+    # Marcar curvas del circuito
+    if circuit_info is not None and hasattr(circuit_info, 'corners') and circuit_info.corners is not None:
+        corners = circuit_info.corners
+        if 'X' in corners.columns and 'Y' in corners.columns:
+            fig_plot.add_trace(go.Scatter(
+                x=corners['X'], y=corners['Y'],
+                mode='markers+text',
+                name='Corners',
+                marker=dict(color='white', size=5, symbol='diamond'),
+                text=corners['Number'].astype(str),
+                textposition='top center',
+                textfont=dict(color='white', size=8),
+                hoverinfo='skip'
+            ))
+
+    # Punto de inicio/meta (primer punto)
+    fig_plot.add_trace(go.Scatter(
+        x=[telemetry['X'].iloc[0]],
+        y=[telemetry['Y'].iloc[0]],
+        mode='markers',
+        name='Start/Finish',
+        marker=dict(color='#00FF00', size=12, symbol='star'),
+        hoverinfo='name'
+    ))
+
+    fig_plot.update_layout(
+        title=f"Circuit Map - {abbrev} (Coast/Lift & Traction Events)",
+        template="plotly_dark",
+        showlegend=True,
+        legend=dict(orientation="h", yanchor="bottom",
+                    y=1.02, xanchor="right", x=1),
+        xaxis=dict(showgrid=False, zeroline=False,
+                   showticklabels=False, scaleanchor="y"),
+        yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+        height=600,
+        margin=dict(l=20, r=20, t=80, b=20)
+    )
+
+    return fig_plot
+
+
+def plot_stint_comparison(driver_data):
+    """Gráfico de barras horizontales con tiempo promedio por compuesto de neumático"""
+    if driver_data is None:
+        return None
+
+    all_laps = driver_data['all_laps']
+    if all_laps is None or all_laps.empty:
+        return None
+
+    abbrev = driver_data['abbrev']
+
+    # Filtrar vueltas válidas con información de compuesto
+    valid_laps = all_laps.dropna(subset=['LapTime', 'Compound'])
+    if valid_laps.empty:
+        return None
+
+    # Colores por compuesto
+    compound_colors = {
+        'SOFT': '#FF3333',
+        'MEDIUM': '#FFF200',
+        'HARD': '#EBEBEB',
+        'INTERMEDIATE': '#43B02A',
+        'WET': '#0067AD'
+    }
+
+    # Calcular tiempo promedio por compuesto
+    compound_stats = []
+    for compound in valid_laps['Compound'].unique():
+        if compound and compound != 'UNKNOWN':
+            compound_laps = valid_laps[valid_laps['Compound'] == compound]
+            times = [t.total_seconds() for t in compound_laps['LapTime']]
+            avg_time = sum(times) / len(times)
+            lap_count = len(times)
+            compound_stats.append({
+                'compound': compound,
+                'avg_time': avg_time,
+                'lap_count': lap_count,
+                'color': compound_colors.get(compound, '#888888')
+            })
+
+    if not compound_stats:
+        return None
+
+    # Ordenar por tiempo promedio (más rápido arriba)
+    compound_stats.sort(key=lambda x: x['avg_time'])
+
+    compounds = [s['compound'] for s in compound_stats]
+    avg_times = [s['avg_time'] for s in compound_stats]
+    colors = [s['color'] for s in compound_stats]
+    lap_counts = [s['lap_count'] for s in compound_stats]
+
+    # Crear gráfico de barras horizontales
+    fig_plot = go.Figure()
+    fig_plot.add_trace(go.Bar(
+        y=compounds,
+        x=avg_times,
+        orientation='h',
+        marker=dict(color=colors),
+        text=[f"{t:.2f}s ({n} laps)" for t, n in zip(avg_times, lap_counts)],
+        textposition='auto',
+        name='Avg Lap Time'
+    ))
+
+    fig_plot.update_layout(
+        title=f"Stint Comparison - {abbrev} (Tiempo promedio por compuesto)",
+        xaxis_title="Tiempo Promedio (s)",
+        yaxis_title="Compuesto",
+        template="plotly_dark",
+        height=300
+    )
+
+    return fig_plot
 
 
 def on_load_data(state):
@@ -385,6 +644,8 @@ def on_load_data(state):
         state.fig = None
         state.fig_sectors = None
         state.fig_laptimes = None
+        state.fig_stint = None
+        state.fig_map = None
         state.efficiency_score = 0.0
         state.coast_percentage = 0.0
         notify(state, "error", f"❌ Error cargando {state.session_type}")
@@ -408,24 +669,32 @@ def update_chart(state):
                     driver_data)
                 state.fig_sectors = plot_sector_times(driver_data)
                 state.fig_laptimes = plot_laptime_evolution(driver_data)
+                state.fig_stint = plot_stint_comparison(driver_data)
+                state.fig_map = plot_circuit_map(driver_data)
                 state.efficiency_score = calculate_efficiency_score(
                     driver_data)
             else:
                 state.fig = None
                 state.fig_sectors = None
                 state.fig_laptimes = None
+                state.fig_stint = None
+                state.fig_map = None
                 state.efficiency_score = 0.0
                 state.coast_percentage = 0.0
         else:
             state.fig = None
             state.fig_sectors = None
             state.fig_laptimes = None
+            state.fig_stint = None
+            state.fig_map = None
             state.efficiency_score = 0.0
             state.coast_percentage = 0.0
     else:
         state.fig = None
         state.fig_sectors = None
         state.fig_laptimes = None
+        state.fig_stint = None
+        state.fig_map = None
         state.efficiency_score = 0.0
         state.coast_percentage = 0.0
 
@@ -460,6 +729,10 @@ with tgb.Page() as page:
             tgb.text(
                 "**Coast/Lift (% tiempo sin acelerador ni freno):** {coast_percentage}%", mode="md")
 
+    # Mapa del circuito con Coast/Lift y Traction Events
+    with tgb.part(render="{fig_map is not None}"):
+        tgb.chart(figure="{fig_map}")
+
     # Gráfico combinado de telemetría (Speed, Throttle/Brake, RPM, Gear)
     with tgb.part(render="{fig is not None}"):
         tgb.chart(figure="{fig}")
@@ -470,6 +743,11 @@ with tgb.Page() as page:
         with tgb.layout(columns="1 1"):
             tgb.chart(figure="{fig_sectors}")
             tgb.chart(figure="{fig_laptimes}")
+
+    # Gráfico de Stint Comparison (tiempo promedio por compuesto)
+    with tgb.part(render="{fig_stint is not None}"):
+        tgb.text("---", mode="md")
+        tgb.chart(figure="{fig_stint}")
 
     # Mensaje inicial
     with tgb.part(render="{session is None}"):
